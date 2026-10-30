@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using LinkShortener.Api.Data;
 using LinkShortener.Api.Dtos;
 using LinkShortener.Api.Models;
@@ -10,9 +11,10 @@ namespace LinkShortener.Api.Controllers;
 [Route("api/[controller]")]
 public class LinksController : ControllerBase
 {
+    private static readonly string[] ReservedCodes = { "api", "openapi" };
+
     private readonly AppDbContext _db;
 
-    
     public LinksController(AppDbContext db)
     {
         _db = db;
@@ -32,7 +34,33 @@ public class LinksController : ControllerBase
             return BadRequest("Нужна корректная ссылка, которая начинается с http:// или https://");
         }
 
-        string code = await GenerateUniqueCode();
+        string code;
+
+        if (string.IsNullOrWhiteSpace(request.CustomCode))
+        {
+            code = await GenerateUniqueCode();
+        }
+        else
+        {
+            code = request.CustomCode.Trim();
+
+            bool isCodeValid = Regex.IsMatch(code, "^[a-zA-Z0-9_-]{3,20}$");
+            if (!isCodeValid)
+            {
+                return BadRequest("Код должен быть длиной от 3 до 20 символов: буквы, цифры, - и _");
+            }
+
+            if (ReservedCodes.Contains(code.ToLower()))
+            {
+                return BadRequest("Этот код зарезервирован, выбери другой");
+            }
+
+            bool alreadyExists = await _db.ShortLinks.AnyAsync(l => l.Code == code);
+            if (alreadyExists)
+            {
+                return Conflict("Такой код уже занят");
+            }
+        }
 
         var link = new ShortLink();
         link.Code = code;
@@ -41,7 +69,15 @@ public class LinksController : ControllerBase
         link.ClicksCount = 0;
 
         _db.ShortLinks.Add(link);
-        await _db.SaveChangesAsync();
+
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException)
+        {
+            return Conflict("Такой код уже занят");
+        }
 
         var response = new LinkResponse();
         response.Code = link.Code;
@@ -68,6 +104,22 @@ public class LinksController : ControllerBase
         response.ClicksCount = link.ClicksCount;
 
         return Ok(response);
+    }
+
+    [HttpDelete("{code}")]
+    public async Task<IActionResult> Delete(string code)
+    {
+        var link = await _db.ShortLinks.FirstOrDefaultAsync(l => l.Code == code);
+
+        if (link == null)
+        {
+            return NotFound("Ссылка не найдена");
+        }
+
+        _db.ShortLinks.Remove(link);
+        await _db.SaveChangesAsync();
+
+        return NoContent();
     }
 
     private async Task<string> GenerateUniqueCode()
