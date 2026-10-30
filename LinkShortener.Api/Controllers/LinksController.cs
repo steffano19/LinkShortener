@@ -12,7 +12,7 @@ public class LinksController : ControllerBase
 {
     private readonly AppDbContext _db;
 
-    // ASP.NET сам передаст сюда AppDbContext, мы его подключали в Program.cs
+    
     public LinksController(AppDbContext db)
     {
         _db = db;
@@ -49,6 +49,25 @@ public class LinksController : ControllerBase
         response.ShortUrl = $"{Request.Scheme}://{Request.Host}/{link.Code}";
 
         return Created(response.ShortUrl, response);
+    }
+
+    [HttpGet("{code}/stats")]
+    public async Task<IActionResult> GetStats(string code)
+    {
+        var link = await _db.ShortLinks.FirstOrDefaultAsync(l => l.Code == code);
+
+        if (link == null)
+        {
+            return NotFound("Ссылка не найдена");
+        }
+
+        var response = new StatsResponse();
+        response.Code = link.Code;
+        response.OriginalUrl = link.OriginalUrl;
+        response.CreatedAt = link.CreatedAt;
+        response.ClicksCount = link.ClicksCount;
+
+        return Ok(response);
     }
 
     private async Task<string> GenerateUniqueCode()
